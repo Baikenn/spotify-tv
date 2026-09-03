@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Spotify TV</title>
+
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            overflow: hidden;
+        }
+
+        #embed-iframe {
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+
+<div id="embed-iframe"></div>
+
+<script src="https://open.spotify.com/embed/iframe-api/v1"></script>
+
+<script>
+    window.onSpotifyIframeApiReady = (IFrameAPI) => {
+
+        const element = document.getElementById('embed-iframe');
+
+        const options = {
+            uri: 'spotify:playlist:37i9dQZF1EQpj7X7UK8OOF',
+            width: '100%',
+            height: '100%'
+        };
+
+        IFrameAPI.createController(element, options, (EmbedController) => {
+
+            console.log("Spotify player loaded");
+
+            // Try to automatically start playback
+            setTimeout(() => {
+                EmbedController.play();
+            }, 1000);
+
+            // Try again shortly afterwards
+            setTimeout(() => {
+                EmbedController.resume();
+            }, 3000);
+
+        });
+    };
+</script>
+
+</body>
+</html>
