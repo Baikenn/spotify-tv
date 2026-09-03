@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Spotify TV — one-time auth</title>
+<style>
+    body { font-family: sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; }
+    textarea { width: 100%; height: 80px; font-family: monospace; font-size: 13px; }
+    button { padding: 10px 16px; font-size: 15px; cursor: pointer; }
+</style>
+</head>
+<body>
+<h2>Spotify TV — one-time setup</h2>
+<div id="content">Loading…</div>
+
+<script>
+/* ===================== CONFIG (must match index.html) ===================== */
+const CLIENT_ID = 'YOUR_SPOTIFY_CLIENT_ID';
+const REDIRECT_URI = 'https://baikenn.github.io/spotify-tv/auth.html'; // register THIS exact URI in the dashboard too
+const SCOPES = [
+    'streaming',
+    'user-read-email',
+    'user-read-private',
+    'user-modify-playback-state',
+    'user-read-playback-state'
+].join(' ');
+/* ============================================================================ */
+
+const contentEl = document.getElementById('content');
+
+function randomString(len) {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let out = '';
+    const arr = new Uint8Array(len);
+    crypto.getRandomValues(arr);
+    for (let i = 0; i < len; i++) out += chars[arr[i] % chars.length];
+    return out;
+}
+async function sha256base64url(input) {
+    const data = new TextEncoder().encode(input);
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    let str = btoa(String.fromCharCode(...new Uint8Array(digest)));
+    return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function redirectToLogin() {
+    const verifier = randomString(64);
+    sessionStorage.setItem('pkce_verifier', verifier);
+    const challenge = await sha256base64url(verifier);
+    const params = new URLSearchParams({
+        client_id: CLIENT_ID,
+        response_type: 'code',
+        redirect_uri: REDIRECT_URI,
+        scope: SCOPES,
+        code_challenge_method: 'S256',
+        code_challenge: challenge
+    });
+    window.location = 'https://accounts.spotify.com/authorize?' + params.toString();
+}
+
+async function exchangeCodeForToken(code) {
+    const verifier = sessionStorage.getItem('pkce_verifier');
+    const body = new URLSearchParams({
+        client_id: CLIENT_ID,
+        grant_type: 'authorization_code',
+        code: code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: verifier
+    });
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body
+    });
+    return res.json();
+}
+
+(async () => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+
+    if (!code) {
+        contentEl.innerHTML = '<button id="loginBtn">Log in with Spotify</button>';
+        document.getElementById('loginBtn').onclick = redirectToLogin;
+        return;
+    }
+
+    const data = await exchangeCodeForToken(code);
+    if (data.error) {
+        contentEl.innerHTML = 'Error: ' + (data.error_description || data.error);
+        return;
+    }
+
+    contentEl.innerHTML = `
+        <p>Copy this value into <code>REFRESH_TOKEN</code> in <code>index.html</code>, then commit:</p>
+        <textarea readonly onclick="this.select()">${data.refresh_token}</textarea>
+        <p style="color:#b00">Treat this like a password — anyone with it can control playback on this account.
+        Don't share this page's output, and consider using a throwaway/dedicated Spotify account for the TV
+        rather than your personal one, since this token will live in a public GitHub Pages file.</p>
+    `;
+})();
+</script>
+</body>
+</html>
