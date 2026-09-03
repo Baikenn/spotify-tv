@@ -6,51 +6,68 @@
 <title>Spotify TV</title>
 <style>
     html, body {
-        margin: 0;
-        padding: 0;
-        width: 100%;
-        height: 100%;
-        background: #000;
-        overflow: hidden;
-        font-family: sans-serif;
-        color: #fff;
+        margin: 0; padding: 0; width: 100%; height: 100%;
+        background: #000; overflow: hidden; font-family: sans-serif; color: #fff;
     }
     #status {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        height: 100%;
-        text-align: center;
-        padding: 20px;
-        box-sizing: border-box;
+        position: absolute; top: 16px; left: 16px;
+        font-size: 13px; opacity: 0.5;
     }
-    #status a {
-        color: #1DB954;
-        font-weight: bold;
-        text-decoration: none;
+    #now-playing {
+        position: absolute; bottom: 24px; left: 24px;
+        display: none; align-items: center; gap: 16px;
     }
+    #now-playing img { width: 72px; height: 72px; border-radius: 6px; }
+    #np-title { font-weight: bold; font-size: 22px; }
+    #np-artist { opacity: 0.7; font-size: 16px; }
 </style>
 </head>
 <body>
-<div id="status">Loading…</div>
+<div id="status">Connecting…</div>
+<div id="now-playing">
+    <img id="np-art" src="" alt="">
+    <div>
+        <div id="np-title"></div>
+        <div id="np-artist"></div>
+    </div>
+</div>
+<audio id="player" autoplay></audio>
 
 <script>
 /* ===================== CONFIG ===================== */
-const CLIENT_ID = '99d8990168db45078cf98359b504f922';           // from developer.spotify.com/dashboard
-const REFRESH_TOKEN = 'AQCQhCi3KHsWkGE801QBFuPnxvVriGhwPK0gedNaCINSnylxU2h4mUGfqA6YgkwZ-ehfid8o8rrDD1mbqwL9JN8zGUeYIfJjRrg1mhyOiw5dg5xzHaxukxMn7Wpe42ylMG4'; // from the one-time auth.html step
-const PLAYLIST_URI = 'spotify:playlist:37i9dQZF1EQpj7X7UK8OOF';
+const STREAM_URL = 'http://127.0.0.1:8000/stream.mp3'; // from start-stream.bat
+const CLIENT_ID = '99d8990168db45078cf98359b504f922';
+const REFRESH_TOKEN = 'AQDVBNRVvGafz_3J2ybu58JemwMNA13C5qn7Ua1-EYZOp1sbX4emBHI-V2XHEbbzH0thK6no3Eew32I5Sq0xQB1T7iquku-8vIsjZMepdAp0XnqH2XWCN6Y0mvZH4UlCE5g';             // from the one-time auth.html step
 /* ==================================================== */
 
+const audio = document.getElementById('player');
 const statusEl = document.getElementById('status');
-const setStatus = (html) => { statusEl.innerHTML = html; };
 
-// Headless refresh — no redirect, no user interaction, works on any page load.
-let refreshTokenInUse = REFRESH_TOKEN;
-async function refreshAccessToken() {
+function connectStream() {
+    statusEl.textContent = 'Connecting to stream…';
+    audio.src = STREAM_URL + '?t=' + Date.now(); // cache-bust each attempt
+    audio.play().then(() => {
+        statusEl.textContent = '';
+    }).catch(() => {
+        statusEl.textContent = 'Waiting for stream…';
+        setTimeout(connectStream, 3000);
+    });
+}
+audio.addEventListener('error', () => {
+    statusEl.textContent = 'Stream dropped, reconnecting…';
+    setTimeout(connectStream, 3000);
+});
+audio.addEventListener('ended', () => setTimeout(connectStream, 1000));
+connectStream();
+
+// ---- Now-playing display only (plain Web API calls, no DRM involved) ----
+let accessToken = null, tokenFetchedAt = 0;
+async function getAccessToken() {
+    if (accessToken && Date.now() - tokenFetchedAt < 50 * 60 * 1000) return accessToken;
     const body = new URLSearchParams({
         client_id: CLIENT_ID,
         grant_type: 'refresh_token',
-        refresh_token: refreshTokenInUse
+        refresh_token: REFRESH_TOKEN
     });
     const res = await fetch('https://accounts.spotify.com/api/token', {
         method: 'POST',
@@ -59,104 +76,37 @@ async function refreshAccessToken() {
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error_description || data.error);
-    // Spotify sometimes rotates the refresh token; keep using the newest one in memory
-    if (data.refresh_token) refreshTokenInUse = data.refresh_token;
-    return data.access_token;
+    accessToken = data.access_token;
+    tokenFetchedAt = Date.now();
+    return accessToken;
 }
 
-async function getAccessToken() {
-    if (!REFRESH_TOKEN || REFRESH_TOKEN === 'PASTE_TOKEN_FROM_AUTH_HTML_HERE') {
-        setStatus('Missing REFRESH_TOKEN — run auth.html once and paste the value in.');
-        return null;
-    }
-    return await refreshAccessToken();
-}
-
-async function startPlaylist(deviceId, accessToken) {
-    await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
-        method: 'PUT',
-        headers: {
-            'Authorization': 'Bearer ' + accessToken,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ context_uri: PLAYLIST_URI })
-    });
-}
-
-// Takes over whatever is currently playing anywhere on the account (phone, desktop, etc.)
-// and continues it on this device. Falls back to PLAYLIST_URI if nothing is active.
-async function transferOrStartPlaylist(deviceId, accessToken) {
-    await fetch('https://api.spotify.com/v1/me/player', {
-        method: 'PUT',
-        headers: {
-            'Authorization': 'Bearer ' + accessToken,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ device_ids: [deviceId], play: true })
-    });
-
-    // Give the transfer a moment to land, then check whether anything actually started.
-    setTimeout(async () => {
-        try {
-            const state = await fetch('https://api.spotify.com/v1/me/player', {
-                headers: { 'Authorization': 'Bearer ' + accessToken }
-            });
-            if (state.status === 200) {
-                const data = await state.json();
-                if (!data.is_playing) await startPlaylist(deviceId, accessToken);
-            } else {
-                await startPlaylist(deviceId, accessToken);
-            }
-        } catch (e) {
-            await startPlaylist(deviceId, accessToken);
-        }
-    }, 1500);
-}
-
-// ---- Web Playback SDK bootstrap ----
-window.onSpotifyWebPlaybackSDKReady = async () => {
-    let accessToken;
+async function updateNowPlaying() {
     try {
-        accessToken = await getAccessToken();
-    } catch (e) {
-        setStatus('Login/token error: ' + e.message);
-        return;
-    }
-    if (!accessToken) return; // redirecting to login
-
-    setStatus('Connecting to Spotify…');
-
-    const player = new Spotify.Player({
-        name: 'FiveM TV',
-        getOAuthToken: async (cb) => {
-            try {
-                const t = await refreshAccessToken();
-                cb(t);
-            } catch (e) {
-                setStatus('Token refresh failed: ' + e.message);
+        const token = await getAccessToken();
+        const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        const npEl = document.getElementById('now-playing');
+        if (res.status === 200) {
+            const data = await res.json();
+            if (data && data.item) {
+                document.getElementById('np-title').textContent = data.item.name;
+                document.getElementById('np-artist').textContent =
+                    data.item.artists.map(a => a.name).join(', ');
+                const art = data.item.album && data.item.album.images && data.item.album.images[0];
+                document.getElementById('np-art').src = art ? art.url : '';
+                npEl.style.display = 'flex';
+                return;
             }
-        },
-        volume: 1.0
-    });
-
-    player.addListener('ready', ({ device_id }) => {
-        setStatus('');
-        transferOrStartPlaylist(device_id, accessToken);
-    });
-
-    player.addListener('initialization_error', ({ message }) => setStatus('Init error: ' + message));
-    player.addListener('authentication_error', ({ message }) => setStatus('Auth error: ' + message));
-    player.addListener('account_error', ({ message }) => setStatus('Account error (Premium required): ' + message));
-    player.addListener('playback_error', ({ message }) => console.error('Playback error:', message));
-
-    // Keep the token fresh (access tokens expire after ~1 hour)
-    setInterval(async () => {
-        try { await refreshAccessToken(); } catch (e) { console.error(e); }
-    }, 50 * 60 * 1000);
-
-    player.connect();
-};
+        }
+        npEl.style.display = 'none';
+    } catch (e) {
+        console.error('now-playing error', e);
+    }
+}
+updateNowPlaying();
+setInterval(updateNowPlaying, 8000);
 </script>
-<script src="https://sdk.scdn.co/spotify-player.js"></script>
 </body>
 </html>
