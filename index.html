@@ -1,62 +1,132 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>Spotify TV</title>
-
-    <style>
-        html, body {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background: #000;
-            overflow: hidden;
-        }
-
-        #embed-iframe {
-            width: 100%;
-            height: 100%;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spotify TV</title>
+<style>
+    html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+        font-family: sans-serif;
+        color: #fff;
+    }
+    #status {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        text-align: center;
+        padding: 20px;
+        box-sizing: border-box;
+    }
+    #status a {
+        color: #1DB954;
+        font-weight: bold;
+        text-decoration: none;
+    }
+</style>
 </head>
-
 <body>
-
-<div id="embed-iframe"></div>
-
-<script src="https://open.spotify.com/embed/iframe-api/v1"></script>
+<div id="status">Loading…</div>
 
 <script>
-    window.onSpotifyIframeApiReady = (IFrameAPI) => {
+/* ===================== CONFIG ===================== */
+const CLIENT_ID = 'YOUR_SPOTIFY_CLIENT_ID';           // from developer.spotify.com/dashboard
+const REFRESH_TOKEN = 'PASTE_TOKEN_FROM_AUTH_HTML_HERE'; // from the one-time auth.html step
+const PLAYLIST_URI = 'spotify:playlist:37i9dQZF1EQpj7X7UK8OOF';
+/* ==================================================== */
 
-        const element = document.getElementById('embed-iframe');
+const statusEl = document.getElementById('status');
+const setStatus = (html) => { statusEl.innerHTML = html; };
 
-        const options = {
-            uri: 'spotify:playlist:37i9dQZF1EQpj7X7UK8OOF',
-            width: '100%',
-            height: '100%'
-        };
+// Headless refresh — no redirect, no user interaction, works on any page load.
+let refreshTokenInUse = REFRESH_TOKEN;
+async function refreshAccessToken() {
+    const body = new URLSearchParams({
+        client_id: CLIENT_ID,
+        grant_type: 'refresh_token',
+        refresh_token: refreshTokenInUse
+    });
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error_description || data.error);
+    // Spotify sometimes rotates the refresh token; keep using the newest one in memory
+    if (data.refresh_token) refreshTokenInUse = data.refresh_token;
+    return data.access_token;
+}
 
-        IFrameAPI.createController(element, options, (EmbedController) => {
+async function getAccessToken() {
+    if (!REFRESH_TOKEN || REFRESH_TOKEN === 'PASTE_TOKEN_FROM_AUTH_HTML_HERE') {
+        setStatus('Missing REFRESH_TOKEN — run auth.html once and paste the value in.');
+        return null;
+    }
+    return await refreshAccessToken();
+}
 
-            console.log("Spotify player loaded");
+async function startPlaylist(deviceId, accessToken) {
+    await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+        method: 'PUT',
+        headers: {
+            'Authorization': 'Bearer ' + accessToken,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ context_uri: PLAYLIST_URI })
+    });
+}
 
-            // Try to automatically start playback
-            setTimeout(() => {
-                EmbedController.play();
-            }, 1000);
+// ---- Web Playback SDK bootstrap ----
+window.onSpotifyWebPlaybackSDKReady = async () => {
+    let accessToken;
+    try {
+        accessToken = await getAccessToken();
+    } catch (e) {
+        setStatus('Login/token error: ' + e.message);
+        return;
+    }
+    if (!accessToken) return; // redirecting to login
 
-            // Try again shortly afterwards
-            setTimeout(() => {
-                EmbedController.resume();
-            }, 3000);
+    setStatus('Connecting to Spotify…');
 
-        });
-    };
+    const player = new Spotify.Player({
+        name: 'FiveM TV',
+        getOAuthToken: async (cb) => {
+            try {
+                const t = await refreshAccessToken();
+                cb(t);
+            } catch (e) {
+                setStatus('Token refresh failed: ' + e.message);
+            }
+        },
+        volume: 1.0
+    });
+
+    player.addListener('ready', ({ device_id }) => {
+        setStatus('');
+        startPlaylist(device_id, accessToken);
+    });
+
+    player.addListener('initialization_error', ({ message }) => setStatus('Init error: ' + message));
+    player.addListener('authentication_error', ({ message }) => setStatus('Auth error: ' + message));
+    player.addListener('account_error', ({ message }) => setStatus('Account error (Premium required): ' + message));
+    player.addListener('playback_error', ({ message }) => console.error('Playback error:', message));
+
+    // Keep the token fresh (access tokens expire after ~1 hour)
+    setInterval(async () => {
+        try { await refreshAccessToken(); } catch (e) { console.error(e); }
+    }, 50 * 60 * 1000);
+
+    player.connect();
+};
 </script>
-
+<script src="https://sdk.scdn.co/spotify-player.js"></script>
 </body>
 </html>
