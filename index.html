@@ -83,6 +83,36 @@ async function startPlaylist(deviceId, accessToken) {
     });
 }
 
+// Takes over whatever is currently playing anywhere on the account (phone, desktop, etc.)
+// and continues it on this device. Falls back to PLAYLIST_URI if nothing is active.
+async function transferOrStartPlaylist(deviceId, accessToken) {
+    await fetch('https://api.spotify.com/v1/me/player', {
+        method: 'PUT',
+        headers: {
+            'Authorization': 'Bearer ' + accessToken,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ device_ids: [deviceId], play: true })
+    });
+
+    // Give the transfer a moment to land, then check whether anything actually started.
+    setTimeout(async () => {
+        try {
+            const state = await fetch('https://api.spotify.com/v1/me/player', {
+                headers: { 'Authorization': 'Bearer ' + accessToken }
+            });
+            if (state.status === 200) {
+                const data = await state.json();
+                if (!data.is_playing) await startPlaylist(deviceId, accessToken);
+            } else {
+                await startPlaylist(deviceId, accessToken);
+            }
+        } catch (e) {
+            await startPlaylist(deviceId, accessToken);
+        }
+    }, 1500);
+}
+
 // ---- Web Playback SDK bootstrap ----
 window.onSpotifyWebPlaybackSDKReady = async () => {
     let accessToken;
@@ -111,7 +141,7 @@ window.onSpotifyWebPlaybackSDKReady = async () => {
 
     player.addListener('ready', ({ device_id }) => {
         setStatus('');
-        startPlaylist(device_id, accessToken);
+        transferOrStartPlaylist(device_id, accessToken);
     });
 
     player.addListener('initialization_error', ({ message }) => setStatus('Init error: ' + message));
