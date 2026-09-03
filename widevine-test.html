@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Widevine test</title>
+<style>body{background:#000;color:#0f0;font-family:monospace;font-size:20px;padding:20px;white-space:pre-wrap;}</style>
+</head>
+<body>
+<div id="out">Testing…</div>
+<script>
+const out = document.getElementById('out');
+const log = (msg) => { out.textContent += '\n' + msg; };
+
+out.textContent = 'User agent: ' + navigator.userAgent + '\n';
+log('EME API present: ' + (!!navigator.requestMediaKeySystemAccess));
+
+if (!navigator.requestMediaKeySystemAccess) {
+    log('RESULT: No EME support at all. Widevine/Spotify SDK cannot work here.');
+} else {
+    const config = [{
+        initDataTypes: ['cenc'],
+        audioCapabilities: [{ contentType: 'audio/mp4;codecs="mp4a.40.2"' }],
+        videoCapabilities: [{ contentType: 'video/mp4;codecs="avc1.42E01E"' }]
+    }];
+    navigator.requestMediaKeySystemAccess('com.widevine.alpha', config)
+        .then(access => {
+            log('RESULT: SUCCESS — Widevine is available.');
+            log('Key system: ' + access.keySystem);
+        })
+        .catch(err => {
+            log('RESULT: FAILED — ' + err.name + ': ' + err.message);
+        });
+}
+</script>
+</body>
+</html>
