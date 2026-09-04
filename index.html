@@ -35,7 +35,7 @@
 
 <script>
 /* ===================== CONFIG ===================== */
-const STREAM_URL = 'http://127.0.0.1:8000/stream.mp3'; // from start-stream.bat
+const STREAM_URL = 'http://127.0.0.1:8000/stream.ogg'; // from start-stream.bat
 const CLIENT_ID = '99d8990168db45078cf98359b504f922';
 const REFRESH_TOKEN = 'AQDVBNRVvGafz_3J2ybu58JemwMNA13C5qn7Ua1-EYZOp1sbX4emBHI-V2XHEbbzH0thK6no3Eew32I5Sq0xQB1T7iquku-8vIsjZMepdAp0XnqH2XWCN6Y0mvZH4UlCE5g';             // from the one-time auth.html step
 /* ==================================================== */
@@ -59,6 +59,18 @@ audio.addEventListener('error', () => {
 });
 audio.addEventListener('ended', () => setTimeout(connectStream, 1000));
 connectStream();
+
+// Live streams have no fixed length — if the browser buffers ahead faster
+// than it plays (common on a fast localhost link), the gap between what's
+// downloaded and what's actually playing grows over time. This trims it
+// back down periodically so playback doesn't drift further from real-time.
+setInterval(() => {
+    if (audio.buffered.length) {
+        const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
+        const lag = bufferedEnd - audio.currentTime;
+        if (lag > 1.5) audio.currentTime = bufferedEnd - 0.3;
+    }
+}, 2000);
 
 // ---- Now-playing display only (plain Web API calls, no DRM involved) ----
 let accessToken = null, tokenFetchedAt = 0;
